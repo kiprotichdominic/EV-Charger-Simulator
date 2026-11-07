@@ -7,6 +7,8 @@ real charger does, while showing every OCPP frame on the wire.
 Every message is built and validated by the [`ocpp`](https://pypi.org/project/ocpp/) library, so what the
 simulator sends always matches the OCPP schema.
 
+![The charger simulator page, with the connect form on the left and the message log on the right](docs/screenshot.png)
+
 ## Requirements
 
 - Python 3.12+
