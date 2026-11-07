@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Charger simulator · CCMS</title>
+<meta name="color-scheme" content="light dark">
+<script>
+  // Before first paint, so the page never flashes the wrong theme.
+  try { const t = localStorage.getItem("sim-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
+<style>
+  /* Tokens from ccms-web (src/app/globals.css), so the simulator reads as part of the same product. */
+  :root {
+    --bg: #f5f6f3; --surface: #ffffff; --sunken: #eef0ec; --border: #dfe2dc; --text: #14181a; --muted: #5b6570;
+    --primary: #0b6b62; --primary-fg: #ffffff; --primary-soft: #e2f1ee; --danger: #b42318; --danger-bg: #fdecea;
+    --ok-bg: #e3f4ec; --ok-fg: #0a5c3a; --warn-bg: #fdf1d8; --warn-fg: #7a4b00; --info-bg: #e5eefb; --info-fg: #1b4a8a;
+    --led-idle: #9aa5ad; --led-ready: #d99a1e; --led-charging: #12a37a; --led-fault: #d64545;
+    --shadow: 0 1px 2px rgb(20 24 26 / .05), 0 4px 14px rgb(20 24 26 / .05);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1112; --surface: #151b1d; --sunken: #101517; --border: #2a3336; --text: #eceeed; --muted: #9aa5ad;
+      --primary: #3fc1b3; --primary-fg: #06201d; --primary-soft: #11302c; --danger: #ff8a7a; --danger-bg: #3a1a17;
+      --ok-bg: #12352a; --ok-fg: #7fe0b0; --warn-bg: #3a2e12; --warn-fg: #f2c46b; --info-bg: #14283f; --info-fg: #8db8f0;
+      --led-idle: #5d686f; --led-ready: #f2c46b; --led-charging: #3fd6a3; --led-fault: #ff8a7a;
+      --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 6px 18px rgb(0 0 0 / .25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1112; --surface: #151b1d; --sunken: #101517; --border: #2a3336; --text: #eceeed; --muted: #9aa5ad;
+    --primary: #3fc1b3; --primary-fg: #06201d; --primary-soft: #11302c; --danger: #ff8a7a; --danger-bg: #3a1a17;
+    --ok-bg: #12352a; --ok-fg: #7fe0b0; --warn-bg: #3a2e12; --warn-fg: #f2c46b; --info-bg: #14283f; --info-fg: #8db8f0;
+    --led-idle: #5d686f; --led-ready: #f2c46b; --led-charging: #3fd6a3; --led-fault: #ff8a7a;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 6px 18px rgb(0 0 0 / .25);
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  .top { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--primary); color: var(--primary-fg); display: grid; place-items: center; }
+  .brand h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+  .brand p { margin: 0; color: var(--muted); font-size: 13px; }
+  .top .spacer { flex: 1; }
+
+  .layout { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 20px; padding: 20px 24px 40px; max-width: 1440px; margin: 0 auto; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; padding: 16px; } .top { padding: 12px 16px; } .brand p { display: none; } }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow); }
+  .panel-pad { padding: 16px; }
+  .panel-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0; }
+
+  /* Sidebar */
+  aside { display: flex; flex-direction: column; gap: 16px; align-self: start; position: sticky; top: 20px; }
+  @media (max-width: 900px) { aside { position: static; } }
+  .list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .list button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--r-md); background: none; text-align: left; cursor: pointer; }
+  .list button:hover { background: var(--sunken); }
+  .list button[aria-current="true"] { background: var(--primary-soft); border-color: color-mix(in oklab, var(--primary) 35%, transparent); }
+  .list .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list .ver { font: 12px var(--mono); color: var(--muted); }
+
+  label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin: 12px 0 5px; }
+  input, select { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
+  input::placeholder { color: color-mix(in oklab, var(--muted) 70%, transparent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; background: var(--sunken); border: 1px solid var(--border); border-radius: var(--r-md); }
+  .seg button { height: 30px; border: 0; border-radius: 7px; background: none; cursor: pointer; color: var(--muted); font-weight: 500; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  details.more summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 14px; list-style: none; display: flex; align-items: center; gap: 6px; }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more[open] summary svg { transform: rotate(90deg); }
+  details.more summary svg { transition: transform 150ms ease-out; width: 14px; height: 14px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); cursor: pointer; font-weight: 500; white-space: nowrap; transition: border-color 120ms ease-out, background-color 120ms ease-out; }
+  .btn:hover:not(:disabled) { border-color: color-mix(in oklab, var(--text) 30%, var(--border)); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  .btn.primary:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 88%, var(--text)); }
+  .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
+  .btn.ghost:hover:not(:disabled) { color: var(--text); background: var(--sunken); }
+  .btn.danger { color: var(--danger); }
+  .btn.block { width: 100%; height: 38px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .form-error { color: var(--danger); font-size: 13px; margin: 10px 0 0; }
+
+  /* Charger */
+  main { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+  .charger-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  .charger-head h2 { font-size: 20px; letter-spacing: -0.02em; margin: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--sunken); color: var(--muted); }
+  .chip.ok { background: var(--ok-bg); color: var(--ok-fg); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn-fg); }
+  .chip.bad { background: var(--danger-bg); color: var(--danger); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .endpoint { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 200px; }
+  .charger-actions { display: flex; gap: 6px; }
+  .banner { margin: 14px 18px 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--danger-bg); color: var(--danger); font-size: 13px; display: flex; gap: 8px; align-items: flex-start; }
+  .banner.info { background: var(--info-bg); color: var(--info-fg); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
+  .outage { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--sunken); }
+  .outage .label { font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 4px; }
+  .outage select { width: auto; height: 32px; }
+  .outage .btn { height: 32px; }
+
+  .connectors { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; padding: 18px; }
+  .conn { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+  .conn-top { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+  .led { width: 10px; height: 10px; border-radius: 50%; background: var(--led-idle); box-shadow: 0 0 0 3px color-mix(in oklab, var(--led-idle) 20%, transparent); }
+  .led.ready { background: var(--led-ready); box-shadow: 0 0 0 3px color-mix(in oklab, var(--led-ready) 22%, transparent); }
+  .led.charging { background: var(--led-charging); box-shadow: 0 0 0 3px color-mix(in oklab, var(--led-charging) 25%, transparent); animation: pulse 2s ease-in-out infinite; }
+  .led.fault { background: var(--led-fault); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--led-charging) 8%, transparent); } }
+  .conn-top strong { font-size: 14px; }
+  .conn-top .status { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 500; }
+  /* The charger's display: dark in both themes, like real hardware. */
+  .display { margin: 0 14px; padding: 14px; border-radius: var(--r-sm); background: #0f1719; color: #dff3ee; font-family: var(--mono); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .07); }
+  .display .big { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .display .big small { font-size: 13px; color: #8fb3ab; font-weight: 500; margin-left: 4px; }
+  .display .row { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 12px; color: #8fb3ab; font-variant-numeric: tabular-nums; }
+  .display .row b { color: #dff3ee; font-weight: 500; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 12px 14px 0; font-size: 12px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .next { padding: 10px 14px 0; font-size: 13px; color: var(--muted); min-height: 30px; }
+  .conn-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px 0; }
+  .tap { display: flex; gap: 8px; padding: 10px 14px 14px; }
+  .tap input { font-family: var(--mono); }
+  .tap input:not(:placeholder-shown) { text-transform: uppercase; }
+  .recent { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 14px 14px; margin-top: -6px; }
+  .recent button { height: 24px; padding: 0 8px; border: 1px dashed var(--border); border-radius: var(--r-sm); background: none; font: 11px var(--mono); color: var(--muted); cursor: pointer; }
+  .recent button:hover { color: var(--text); border-style: solid; }
+
+  /* Message log */
+  .log-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .log-head h3 { margin: 0; font-size: 14px; }
+  .log-head .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .log-head .spacer { flex: 1; }
+  .filters { display: flex; padding: 3px; background: var(--sunken); border-radius: var(--r-md); border: 1px solid var(--border); }
+  .filters button { height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500; }
+  .filters button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .search { width: 180px; height: 32px; }
+  .frames { max-height: 520px; overflow: auto; }
+  .frame { border-bottom: 1px solid var(--border); }
+  .frame:last-child { border-bottom: 0; }
+  .frame > button { display: grid; grid-template-columns: 76px 22px minmax(0, 1fr); gap: 10px; align-items: center; width: 100%; padding: 8px 18px; border: 0; background: none; text-align: left; cursor: pointer; font: 12px/1.4 var(--mono); }
+  .frame > button:hover { background: var(--sunken); }
+  .frame .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .frame .dir { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); }
+  .frame .dir.out { color: var(--primary); background: var(--primary-soft); }
+  .frame .dir.in { color: var(--info-fg); background: var(--info-bg); }
+  .frame .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .frame .what b { font-weight: 600; font-family: system-ui, sans-serif; margin-right: 8px; }
+  .frame .what .ok { color: var(--ok-fg); }
+  .frame .payload { color: var(--muted); }
+  .frame.err > button { background: var(--danger-bg); }
+  .frame.err .what b { color: var(--danger); }
+  .frame pre { margin: 0; padding: 12px 18px 14px 126px; background: var(--sunken); font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; position: relative; }
+  .frame pre .copy { position: absolute; top: 8px; right: 12px; }
+  @media (max-width: 640px) { .frame > button { grid-template-columns: 22px minmax(0, 1fr); padding: 8px 12px; } .frame .t { display: none; } .frame pre { padding-left: 12px; } .search { width: 100%; } }
+  .empty { padding: 36px 18px; text-align: center; color: var(--muted); }
+  .empty h3 { color: var(--text); font-size: 15px; margin: 10px 0 4px; }
+  .empty ol { text-align: left; display: inline-block; margin: 12px 0 0; padding-left: 18px; }
+  .empty li { margin: 4px 0; }
+
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(8px); opacity: 0; background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: var(--r-md); font-size: 13px; box-shadow: var(--shadow); transition: opacity 160ms ease-out, transform 160ms ease-out; pointer-events: none; max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.bad { background: var(--danger); color: #fff; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition-duration: 0.01ms !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></symbol>
+  <symbol id="i-in" viewBox="0 0 24 24"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="brand">
+    <div class="mark"><svg class="i"><use href="#i-zap"/></svg></div>
+    <div>
+      <h1>Charger simulator</h1>
+      <p>A stand-in charger for testing the CCMS app and backend, in OCPP 1.6J or 2.0.1. No hardware needed.</p>
+    </div>
+  </div>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="theme" type="button" aria-label="Change theme"><svg class="i"><use href="#i-theme"/></svg><span id="theme-label">System</span></button>
+</header>
+
+<div class="layout">
+  <aside>
+    <section class="panel panel-pad" id="list-panel" hidden aria-labelledby="list-title">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 class="panel-title" id="list-title">Chargers</h2>
+        <button class="btn ghost" id="add-another" type="button"><svg class="i"><use href="#i-plus"/></svg>Add</button>
+      </div>
+      <div class="list" id="list"></div>
+    </section>
+
+    <section class="panel panel-pad" id="form-panel" aria-labelledby="form-title">
+      <h2 class="panel-title" id="form-title">Connect a charger</h2>
+      <p class="sub">It must already exist in the backend (admin API or charger list).</p>
+      <form id="connect" novalidate>
+        <label for="url">Backend URL</label>
+        <input id="url" required placeholder="ws://localhost:8000/ocpp" spellcheck="false" autocomplete="off">
+        <p class="hint">Up to <code>/ocpp</code>. The charger ID is added for you.</p>
+        <label for="cpid">Charge point ID</label>
+        <input id="cpid" required placeholder="SIM-001" spellcheck="false" autocomplete="off">
+        <label id="ver-label">OCPP version</label>
+        <div class="seg" role="group" aria-labelledby="ver-label">
+          <button type="button" data-version="1.6" aria-pressed="true">1.6J</button>
+          <button type="button" data-version="2.0.1" aria-pressed="false">2.0.1</button>
+        </div>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="off" placeholder="Optional in dev">
+        <details class="more">
+          <summary><svg class="i"><use href="#i-chev"/></svg>Hardware and timing</summary>
+          <div class="grid2">
+            <div><label for="connectors">Connectors</label><input id="connectors" type="number" min="1" max="8" value="2"></div>
+            <div><label for="power">Power (W)</label><input id="power" type="number" min="1" value="7400"></div>
+            <div><label for="interval">Reading every (s)</label><input id="interval" type="number" min="0.05" step="any" value="5"></div>
+            <div><label for="speed">Energy speed</label><input id="speed" type="number" min="1" max="3600" step="any" value="1"></div>
+          </div>
+          <p class="hint">Speed 60 delivers an hour of energy per minute. Timestamps stay real, so a charger with a max power set will flag the session for review.</p>
+        </details>
+        <div style="margin-top:16px"><button class="btn primary block" type="submit" id="connect-btn"><svg class="i"><use href="#i-plug"/></svg>Connect</button></div>
+        <p class="form-error" id="connect-msg" role="alert"></p>
+      </form>
+    </section>
+  </aside>
+
+  <main>
+    <section class="panel" id="board" aria-live="polite"></section>
+    <section class="panel" aria-labelledby="log-title">
+      <div class="log-head">
+        <h3 id="log-title">Messages</h3>
+        <span class="count" id="log-count"></span>
+        <span class="spacer"></span>
+        <div class="filters" role="group" aria-label="Show">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="calls" aria-pressed="false">Requests</button>
+          <button type="button" data-filter="errors" aria-pressed="false">Errors</button>
+        </div>
+        <input class="search" id="search" type="search" placeholder="Filter, e.g. TransactionEvent" aria-label="Filter messages">
+        <button class="btn ghost" id="pause" type="button" aria-pressed="false"><svg class="i"><use href="#i-pause"/></svg><span>Pause</span></button>
+        <button class="btn ghost" id="clear" type="button">Clear</button>
+      </div>
+      <div class="frames" id="log"></div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const icon = (id) => `<svg class="i" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// --- theme: system, light, dark
+const themes = ["system", "light", "dark"];
+function applyTheme(t) {
+  if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  $("#theme-label").textContent = t[0].toUpperCase() + t.slice(1);
+  try { localStorage.setItem("sim-theme", t); } catch {}
+}
+applyTheme((() => { try { return localStorage.getItem("sim-theme") || "system"; } catch { return "system"; } })());
+$("#theme").addEventListener("click", () => {
+  const cur = $("#theme-label").textContent.toLowerCase();
+  applyTheme(themes[(themes.indexOf(cur) + 1) % themes.length]);
+});
+
+// --- connect form, remembered between visits (never the password)
+let version = "1.6";
+const form = store.get("sim-form", {});
+$("#url").value = form.url ?? "ws://localhost:8000/ocpp";
+$("#cpid").value = form.cpid ?? "SIM-001";
+for (const k of ["connectors", "power", "interval", "speed"]) if (form[k]) $("#" + k).value = form[k];
+setVersion(form.version ?? "1.6");
+function setVersion(v) {
+  version = v;
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.version === v)));
+}
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setVersion(b.dataset.version)));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
+  const text = await res.text();
+  let body = null; try { body = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const d = body?.detail;
+    throw new Error(typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg).join("; ") : res.statusText);
+  }
+  return body;
+}
+
+let toastTimer;
+function toast(text, bad = false) {
+  const t = $("#toast");
+  t.textContent = text; t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = "toast" + (bad ? " bad" : "")), 3200);
+}
+
+$("#connect").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#connect-msg"), btn = $("#connect-btn");
+  const url = $("#url").value.trim(), cpid = $("#cpid").value.trim();
+  if (!/^wss?:\/\//.test(url)) { msg.textContent = "The backend URL starts with ws:// or wss://."; $("#url").focus(); return; }
+  if (!/^[A-Za-z0-9_.:-]+$/.test(cpid)) { msg.textContent = "Use letters, digits, and . _ : - in the charge point ID."; $("#cpid").focus(); return; }
+  msg.textContent = ""; btn.disabled = true; btn.lastChild.textContent = "Connecting…";
+  const values = { url, cpid, version, connectors: $("#connectors").value, power: $("#power").value, interval: $("#interval").value, speed: $("#speed").value };
+  store.set("sim-form", values);
+  try {
+    const c = await api("/api/chargers", { method: "POST", body: JSON.stringify({
+      url, charge_point_id: cpid, version, password: $("#password").value || null,
+      connectors: +values.connectors, power_w: +values.power, meter_interval_s: +values.interval, speed: +values.speed,
+    }) });
+    showForm(false);
+    select(c.charge_point_id);
+    await refresh();
+  } catch (err) { msg.textContent = err.message; }
+  finally { btn.disabled = false; btn.lastChild.textContent = "Connect"; }
+});
+
+function showForm(show) {
+  $("#form-panel").hidden = !show && chargers.length > 0;
+  if (show) $("#cpid").focus();
+}
+$("#add-another").addEventListener("click", () => { $("#form-panel").hidden = false; $("#cpid").select(); });
+
+// --- state
+let chargers = [];
+let selected = null;
+let lastFrame = 0;
+let frames = [];
+const names = new Map(); // CALL id -> action, to name replies
+const open = new Set();  // expanded frame seqs
+let filter = "all", query = "", paused = false;
+const typed = {};        // "cpid/no" -> card value
+let recentCards = store.get("sim-cards", ["RFID0001"]);
+let confirmRemove = 0;
+let firstLoad = true;  // when Remove was first pressed; a second press within 3 s removes
+
+function select(cpid) {
+  if (selected === cpid) return;
+  selected = cpid; lastFrame = 0; frames = []; names.clear(); open.clear();
+  renderLog();
+}
+
+// --- charger board
+const STATE = { connected: ["ok", "Connected"], connecting: ["warn", "Connecting"], offline: ["warn", "Offline"], failed: ["bad", "Not connected"], disconnected: ["", "Disconnected"] };
+const OUTAGES = [["network_drop", "Network drop", "The link dies; charging continues and messages queue until it is back. No reboot."],
+                 ["power_cut_lost", "Power cut, session lost", "Charging stops, the charger reboots and has forgotten its sessions. The backend recovers them."],
+                 ["power_cut_saved", "Power cut, session saved", "Charging stops; after the reboot the charger ends its saved sessions with PowerLoss."]];
+let outageSecs = 30;
+function ledFor(k) {
+  if (k.transaction != null) return "charging";
+  if (k.status === "Faulted") return "fault";
+  if (k.plugged || k.id_tag) return "ready";
+  return "";
+}
+function nextStep(k, present, online) {
+  if (!present) return "Waiting for the connection.";
+  if (k.saved) return "Saved through the power cut. The charger ends it with PowerLoss once it has rebooted.";
+  if (!online && k.transaction != null) return "Charging offline. Readings are queued and sent when the charger is back.";
+  if (!online) return "Offline. Cards cannot be checked until the charger is back.";
+  if (k.transaction != null) return "Charging. Stop from the app, press Stop, or unplug.";
+  if (k.plugged && k.id_tag) return "Starting…";
+  if (k.plugged) return "Cable in. Tap a card, or start from the app.";
+  if (k.id_tag) return "Authorized. Plug in to start charging.";
+  return "Plug in, or tap a card first.";
+}
+function elapsed(iso) {
+  if (!iso) return "–";
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(r).padStart(2, "0");
+}
+const kwh = (wh) => (wh / 1000).toFixed(3);
+
+function renderList() {
+  $("#list-panel").hidden = chargers.length === 0;
+  $("#list").innerHTML = chargers.map((c) => {
+    const [tone] = STATE[c.state] ?? [""];
+    return `<button type="button" data-select="${esc(c.charge_point_id)}" aria-current="${c.charge_point_id === selected}">
+      <span class="chip ${tone}" style="padding:0 6px;height:18px" aria-label="${esc(c.state)}"><span class="dot"></span></span>
+      <span class="name">${esc(c.charge_point_id)}</span><span class="ver">${esc(c.version)}</span></button>`;
+  }).join("");
+}
+
+function renderBoard() {
+  const board = $("#board");
+  const c = chargers.find((x) => x.charge_point_id === selected);
+  if (!c) {
+    board.innerHTML = `<div class="empty">${icon("plug")}<h3>No charger connected</h3>
+      <p>Start the backend, then connect a charger on the left.</p>
+      <ol><li>The charge point ID must exist in the backend.</li>
+      <li>Pick 1.6J or 2.0.1, the same way a real charger would.</li>
+      <li>Press Start in the app, then Plug in here.</li></ol></div>`;
+    return;
+  }
+  const online = c.state === "connected";
+  const present = ["connected", "offline", "connecting"].includes(c.state);
+  let [tone, label] = STATE[c.state] ?? ["", c.state];
+  if (c.state === "offline" && c.retry_in_s != null) label += ` · retry in ${Math.ceil(c.retry_in_s)} s`;
+  let banner = "";
+  if (c.state === "failed") banner = `<div class="banner">${icon("alert")}<span>${esc(c.error ?? "Could not connect.")} It will not retry on its own; fix it and press Reconnect.</span></div>`;
+  else if (!online && present && c.offline_reason) {
+    const why = c.offline_reason.startsWith("network drop") ? "Charging carries on and messages wait to be sent."
+      : c.offline_reason.endsWith("lost") ? "Running sessions are lost; the backend recovers them after the reboot."
+      : c.offline_reason.endsWith("saved") ? "Running sessions were saved; they end with PowerLoss after the reboot."
+      : "The charger reconnects by itself, backing off from 1 s to 30 s.";
+    const queued = c.queued ? ` ${c.queued} message${c.queued === 1 ? "" : "s"} waiting.` : "";
+    banner = `<div class="banner warn">${icon(c.offline_reason.startsWith("power") ? "power" : "alert")}<span><b>${esc(c.offline_reason[0].toUpperCase() + c.offline_reason.slice(1))}.</b> ${why}${queued}</span></div>`;
+  } else if (c.queued) banner = `<div class="banner info">${icon("refresh")}<span>Sending ${c.queued} queued message${c.queued === 1 ? "" : "s"}…</span></div>`;
+  board.innerHTML = `
+    <div class="charger-head">
+      <h2>${esc(c.charge_point_id)}</h2>
+      <span class="chip">OCPP ${esc(c.version)}</span>
+      <span class="chip ${tone}"><span class="dot"></span>${label}</span>
+      <span class="endpoint" title="${esc(c.url)}/${esc(c.charge_point_id)}">${esc(c.url)}/${esc(c.charge_point_id)}</span>
+      <div class="charger-actions">
+        <button class="btn" data-op="reconnect" type="button" title="Close the connection and open a new one. Running sessions carry on.">${icon("refresh")}Reconnect</button>
+        ${Date.now() - confirmRemove < 3000
+          ? `<button class="btn danger" data-op="remove" type="button">${icon("trash")}Remove?</button>`
+          : `<button class="btn ghost danger" data-op="remove" type="button" aria-label="Remove ${esc(c.charge_point_id)}">${icon("trash")}</button>`}
+      </div>
+    </div>
+    <div class="outage" role="group" aria-label="Simulate an outage">
+      <span class="label">Simulate</span>
+      <label class="sr" for="outage-secs">Outage length</label>
+      <select id="outage-secs" data-outage-secs>${[[10, "10 s"], [30, "30 s"], [120, "2 min"], [300, "5 min"]].map(([v, t]) =>
+        `<option value="${v}" ${v === outageSecs ? "selected" : ""}>${t}</option>`).join("")}</select>
+      ${OUTAGES.map(([kind, text, help]) => `<button class="btn" type="button" data-outage="${kind}" title="${help}" ${online ? "" : "disabled"}>${icon(kind === "network_drop" ? "alert" : "power")}${text}</button>`).join("")}
+    </div>
+    ${banner}
+    <div class="connectors">${c.connectors.map((k) => connectorCard(c, k, present, online)).join("")}</div>`;
+}
+
+function connectorCard(c, k, live, online) {
+  const key = `${c.charge_point_id}/${k.no}`;
+  const charging = k.transaction != null;
+  const primary = charging
+    ? `<button class="btn primary" data-act="stop" data-no="${k.no}" type="button" ${live ? "" : "disabled"}>${icon("stop")}Stop charging</button>`
+    : k.plugged
+      ? `<button class="btn" data-act="unplug" data-no="${k.no}" type="button" ${live ? "" : "disabled"}>${icon("plug")}Unplug</button>`
+      : `<button class="btn primary" data-act="plug_in" data-no="${k.no}" type="button" ${live ? "" : "disabled"}>${icon("plug")}Plug in</button>`;
+  const secondary = charging
+    ? `<button class="btn" data-act="unplug" data-no="${k.no}" type="button" ${live ? "" : "disabled"}>Unplug</button>`
+    : `<span></span>`;
+  return `<article class="conn" aria-label="Connector ${k.no}">
+    <div class="conn-top"><span class="led ${ledFor(k)}" aria-hidden="true"></span><strong>Connector ${k.no}</strong><span class="status">${esc(k.status)}</span></div>
+    <div class="display" aria-label="Meter">
+      <div class="big">${charging && k.session_wh != null ? kwh(k.session_wh) : kwh(k.register_wh)}<small>${charging ? "kWh this session" : "kWh register"}</small></div>
+      <div class="row"><span>Power <b>${k.power_w ? (k.power_w / 1000).toFixed(1) + " kW" : "–"}</b></span><span>Time <b data-since="${esc(k.started_at ?? "")}">${elapsed(k.started_at)}</b></span><span>Meter <b>${kwh(k.register_wh)}</b></span></div>
+    </div>
+    <dl class="facts">
+      <dt>Token</dt><dd>${esc(k.id_tag ?? "–")}</dd>
+      <dt>Transaction</dt><dd title="${esc(k.transaction ?? "")}">${esc(k.transaction ?? "–")}</dd>
+    </dl>
+    <p class="next">${k.note && !charging ? `<span style="color:var(--text)">${esc(k.note[0].toUpperCase() + k.note.slice(1))}.</span> ` : ""}${esc(nextStep(k, live, online))}</p>
+    <div class="conn-actions">${primary}${secondary}</div>
+    <form class="tap" data-tap="${k.no}">
+      <label class="sr" for="card-${esc(key)}">Card for connector ${k.no}</label>
+      <input id="card-${esc(key)}" placeholder="Card ID, e.g. RFID0001" spellcheck="false" autocomplete="off" data-card="${esc(key)}" value="${esc(typed[key] ?? "")}" ${online ? "" : "disabled"}>
+      <button class="btn" type="submit" ${online ? "" : "disabled"} ${online ? "" : 'title="Cards are checked with the backend"'}>${icon("card")}Tap</button>
+    </form>
+    ${recentCards.length ? `<div class="recent">${recentCards.map((t) => `<button type="button" data-fill="${esc(key)}" data-card-value="${esc(t)}" ${online ? "" : "disabled"}>${esc(t)}</button>`).join("")}</div>` : ""}
+  </article>`;
+}
+
+// timers tick between polls
+setInterval(() => document.querySelectorAll("[data-since]").forEach((el) => { if (el.dataset.since) el.textContent = elapsed(el.dataset.since); }), 1000);
+
+$("#list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-select]"); if (!b) return;
+  select(b.dataset.select); render();
+});
+$("#board").addEventListener("input", (e) => { if (e.target.dataset.card) typed[e.target.dataset.card] = e.target.value; });
+$("#board").addEventListener("change", (e) => { if (e.target.dataset.outageSecs !== undefined) outageSecs = +e.target.value; });
+$("#board").addEventListener("submit", async (e) => {
+  const f = e.target.closest("form[data-tap]"); if (!f) return;
+  e.preventDefault();
+  const no = +f.dataset.tap, input = f.querySelector("input");
+  const tag = input.value.trim().toUpperCase();
+  if (!tag) { toast("Type a card ID first.", true); input.focus(); return; }
+  await act("tap", no, tag);
+});
+$("#board").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b || b.type === "submit") return;
+  if (b.dataset.fill) { typed[b.dataset.fill] = b.dataset.cardValue; await act("tap", +b.dataset.fill.split("/").pop(), b.dataset.cardValue); return; }
+  const cpid = encodeURIComponent(selected);
+  try {
+    if (b.dataset.op === "reconnect") { await api(`/api/chargers/${cpid}/reconnect`, { method: "POST" }); toast("Reconnecting…"); }
+    else if (b.dataset.outage) {
+      await api(`/api/chargers/${cpid}/outage/${b.dataset.outage}`, { method: "POST", body: JSON.stringify({ seconds: outageSecs }) });
+      const name = OUTAGES.find(([k]) => k === b.dataset.outage)[1];
+      toast(`${name} for ${outageSecs >= 60 ? outageSecs / 60 + " min" : outageSecs + " s"}.`);
+    }
+    else if (b.dataset.op === "remove") {
+      if (Date.now() - confirmRemove >= 3000) { confirmRemove = Date.now(); renderBoard(); setTimeout(renderBoard, 3000); return; }
+      confirmRemove = 0;
+      await api(`/api/chargers/${cpid}`, { method: "DELETE" });
+      toast(`Removed ${selected}.`); selected = null;
+    }
+    else if (b.dataset.act) await act(b.dataset.act, +b.dataset.no);
+  } catch (err) { toast(err.message, true); }
+  refresh();
+});
+
+async function act(action, no, tag) {
+  try {
+    const body = { connector: no };
+    if (tag) body.id_tag = tag;
+    const r = await api(`/api/chargers/${encodeURIComponent(selected)}/${action}`, { method: "POST", body: JSON.stringify(body) });
+    if (action === "tap") {
+      recentCards = [tag, ...recentCards.filter((t) => t !== tag)].slice(0, 4); store.set("sim-cards", recentCards);
+      typed[`${selected}/${no}`] = "";
+      toast(r.result === "Accepted" ? `Card ${tag} accepted.` : r.result === "Offline" ? "Offline: the card cannot be checked." : `Card ${tag} refused: ${r.result}.`, r.result !== "Accepted");
+    }
+  } catch (err) { toast(err.message, true); }
+  refresh();
+}
+
+// --- message log
+function describe(f) {
+  let msg; try { msg = JSON.parse(f.raw); } catch { return { title: "Unreadable frame", kind: "err", body: f.raw }; }
+  const [type, id] = msg;
+  if (type === 2) { names.set(id, msg[2]); return { title: msg[2], kind: "call", body: msg[3] }; }
+  const action = names.get(id) || "Reply";
+  if (type === 3) return { title: action, kind: "result", body: msg[2] };
+  return { title: `${action} rejected: ${msg[2]}`, kind: "err", body: { description: msg[3], ...msg[4] } };
+}
+function visible(f) {
+  if (filter === "calls" && f.d.kind !== "call") return false;
+  if (filter === "errors" && f.d.kind !== "err") return false;
+  return !query || f.raw.toLowerCase().includes(query);
+}
+function renderLog() {
+  const log = $("#log");
+  const shown = frames.filter(visible);
+  const errors = frames.filter((f) => f.d.kind === "err").length;
+  $("#log-count").textContent = frames.length ? `${frames.length} frames${errors ? ` · ${errors} rejected` : ""}` : "";
+  if (!selected) { log.innerHTML = `<div class="empty">Messages between the charger and the backend appear here.</div>`; return; }
+  if (!shown.length) { log.innerHTML = `<div class="empty">${frames.length ? "Nothing matches this filter." : "No messages yet."}</div>`; return; }
+  log.innerHTML = shown.slice().reverse().map((f) => {
+    const out = f.direction === "out";
+    const summary = f.d.body && typeof f.d.body === "object" && Object.keys(f.d.body).length ? JSON.stringify(f.d.body) : "";
+    const isOpen = open.has(f.seq);
+    return `<div class="frame ${f.d.kind === "err" ? "err" : ""}">
+      <button type="button" data-frame="${f.seq}" aria-expanded="${isOpen}">
+        <span class="t">${new Date(f.at).toLocaleTimeString([], { hour12: false })}</span>
+        <span class="dir ${out ? "out" : "in"}" title="${out ? "Charger to backend" : "Backend to charger"}">${icon(out ? "out" : "in")}</span>
+        <span class="what"><b>${esc(f.d.title)}</b>${f.d.kind === "result" ? '<span class="ok">reply</span> ' : ""}<span class="payload">${esc(summary)}</span></span>
+      </button>
+      ${isOpen ? `<pre>${esc(JSON.stringify(JSON.parse(f.raw), null, 2))}<button class="btn ghost copy" type="button" data-copy="${f.seq}">${icon("copy")}Copy</button></pre>` : ""}
+    </div>`;
+  }).join("");
+}
+$("#log").addEventListener("click", async (e) => {
+  const c = e.target.closest("[data-copy]");
+  if (c) { const f = frames.find((x) => x.seq === +c.dataset.copy); try { await navigator.clipboard.writeText(f.raw); toast("Frame copied."); } catch { toast("Copy is not available here.", true); } return; }
+  const b = e.target.closest("[data-frame]"); if (!b) return;
+  const seq = +b.dataset.frame; open.has(seq) ? open.delete(seq) : open.add(seq); renderLog();
+});
+document.querySelectorAll(".filters button").forEach((b) => b.addEventListener("click", () => {
+  filter = b.dataset.filter;
+  document.querySelectorAll(".filters button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderLog();
+}));
+$("#search").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); renderLog(); });
+$("#pause").addEventListener("click", () => {
+  paused = !paused;
+  $("#pause").setAttribute("aria-pressed", String(paused));
+  $("#pause").innerHTML = paused ? `${icon("play")}<span>Resume</span>` : `${icon("pause")}<span>Pause</span>`;
+  if (!paused) renderLog();
+});
+$("#clear").addEventListener("click", () => { frames = []; open.clear(); renderLog(); });
+
+// --- polling
+function render() {
+  renderList();
+  const editing = document.activeElement?.closest?.("#board form, #board .recent, #board .outage select");
+  if (!editing) renderBoard();
+}
+async function refresh() {
+  try {
+    chargers = await api("/api/chargers");
+    if (chargers.length && !chargers.some((c) => c.charge_point_id === selected)) select(chargers[0].charge_point_id);
+    if (!chargers.length) { selected = null; $("#form-panel").hidden = false; }
+    else if (firstLoad) $("#form-panel").hidden = true;  // chargers already running: show them, not the form
+    firstLoad = false;
+    render();
+    if (selected) {
+      const fresh = await api(`/api/chargers/${encodeURIComponent(selected)}/frames?after=${lastFrame}`);
+      for (const f of fresh) { f.d = describe(f); frames.push(f); lastFrame = Math.max(lastFrame, f.seq); }
+      if (frames.length > 1000) frames = frames.slice(-1000);
+      if (fresh.length && !paused) renderLog();
+    }
+  } catch { /* the simulator server is restarting; the next poll will catch up */ }
+}
+renderBoard(); renderLog();
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
