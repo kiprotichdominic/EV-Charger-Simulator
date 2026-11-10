@@ -1,4 +1,4 @@
-"""A simulated charger that behaves like a real one, in OCPP 1.6J or 2.0.1.
+"""A simulated charger that behaves like a real one, in OCPP 1.6J, 2.0.1 or 2.1.
 
 Every message is built and checked by the same `ocpp` library the backend uses, so what it sends is valid by
 construction: unlike several online simulators, it cannot put a field where the schema does not allow it.
@@ -6,11 +6,13 @@ construction: unlike several online simulators, it cannot put a field where the 
 The charger outlives its connection, as real hardware does. Three layers:
   - Charger: what a person at the charger sees and does (connectors, cable, card reader, meter), the running
     transactions, and an outbox of messages waiting for a connection.
-  - Messages16 / Messages201: build the OCPP payloads for one version.
-  - Link16 / Link201: one WebSocket connection. They answer what the backend asks and carry calls. A
+  - Messages16 / Messages201 / Messages21: build the OCPP payloads for one version.
+  - Link16 / Link201 / Link21: one WebSocket connection. They answer what the backend asks and carry calls. A
     supervisor opens a new link whenever one drops, until the charger is removed.
 
-Behaviour, in both versions:
+2.1 keeps 2.0.1's model for everything the simulator does, so its classes are 2.0.1's with the 2.1 schemas.
+
+Behaviour, in every version:
   - A transaction starts when a connector has both a cable and an accepted token (card tap or the app's
     remote start), in either order. Starting needs the backend; no offline starts, as the backend configures.
   - The meter is a cumulative register per connector. It never goes down; readings carry real timestamps.
@@ -19,7 +21,7 @@ Behaviour, in both versions:
 
 Losing the connection, the cases a CSMS must survive:
   - Network drop: the link dies, charging continues, readings and stops wait in the outbox. The charger
-    reconnects without a BootNotification (it never rebooted) and sends the outbox in order; 2.0.1 events
+    reconnects without a BootNotification (it never rebooted) and sends the outbox in order; 2.0.1/2.1 events
     that happened offline say so (offline=true).
   - The backend drops the link (restart, idle timeout): the charger reconnects with backoff, 1 s doubling to
     30 s, and carries on as after a network drop.
@@ -41,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from ocpp import v16, v201
+from ocpp import v16, v21, v201
 from ocpp.routing import on
 from ocpp.v16.enums import Action as Action16
 from ocpp.v201.enums import Action as Action201
@@ -50,7 +52,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 log = logging.getLogger("simulator")
 
-VERSIONS = {"1.6": "ocpp1.6", "2.0.1": "ocpp2.0.1"}
+VERSIONS = {"1.6": "ocpp1.6", "2.0.1": "ocpp2.0.1", "2.1": "ocpp2.1"}
 ENERGY = "Energy.Active.Import.Register"
 POWER = "Power.Active.Import"
 LOG_LIMIT = 500
@@ -90,8 +92,8 @@ class Connector:
     status: str = "Available"  # as the charger reports it in its version
     plugged: bool = False
     id_tag: str | None = None  # an accepted token waiting for the cable, or the running transaction's
-    remote_start_id: int | None = None  # 2.0.1: the app's start request this transaction answers
-    transaction: str | int | None = None  # 1.6: the backend's integer; 2.0.1: our own name
+    remote_start_id: int | None = None  # 2.x: the app's start request this transaction answers
+    transaction: str | int | None = None  # 1.6: the backend's integer; 2.x: our own name
     register_wh: int = 0
     start_wh: int | None = None  # the register when the running transaction started
     started_at: str | None = None
@@ -100,7 +102,7 @@ class Connector:
     stop_reason: str = "Local"
     saved: bool = False  # the transaction survived a power cut and must be ended after the reboot
     starting: bool = False  # a start is waiting for the backend's answer; never start twice
-    seq: Iterator[int] = field(default_factory=lambda: itertools.count(0))  # 2.0.1 seqNo
+    seq: Iterator[int] = field(default_factory=lambda: itertools.count(0))  # 2.x seqNo
     note: str = ""  # the last thing that happened, for the page
 
 
@@ -150,9 +152,7 @@ class Charger:
             raise ValueError(f"unsupported OCPP version {settings.version!r}")
         self.settings = settings
         self.connectors = {n: Connector(n) for n in range(1, settings.connectors + 1)}
-        self.messages: Messages16 | Messages201 = (
-            Messages16(settings) if settings.version == "1.6" else Messages201(settings)
-        )
+        self.messages: Messages16 | Messages201 = MESSAGES[settings.version](settings)
         self.frames: deque[Frame] = deque(maxlen=LOG_LIMIT)
         self.outbox: deque[Any] = deque(maxlen=OUTBOX_LIMIT)
         # connecting, connected, offline (will reconnect), disconnected (removed), failed (refused)
@@ -272,7 +272,7 @@ class Charger:
             ping_interval=20,  # the link's own liveness, as most chargers use
         ) as ws:
             self._ws = ws
-            link: Link16 | Link201 = (Link16 if s.version == "1.6" else Link201)(s.charge_point_id, ws, self)
+            link: Link16 | Link201 = LINKS[s.version](s.charge_point_id, ws, self)
             reader = asyncio.create_task(link.start())
             self._link, self.state, self.error = link, "connected", None
             # Coming online runs beside the reader, so a link that dies mid-boot fails its calls at once
@@ -601,7 +601,7 @@ def _describe(exc: BaseException) -> str:
 def _reading(
     wh: int, *, context: str | None = None, power_w: int | None = None, v201: bool
 ) -> dict[str, Any]:
-    """One meterValue entry: the energy register, and power while charging. 1.6J sends text, 2.0.1 numbers."""
+    """One meterValue entry: the energy register, and power while charging. 1.6J sends text, 2.x numbers."""
     energy: dict[str, Any] = {"measurand": ENERGY}
     if context:
         energy["context"] = context
@@ -683,33 +683,35 @@ class Messages16:
 
 
 class Messages201:
+    ocpp: Any = v201
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     def boot(self) -> Any:
         s = self.settings
-        return v201.call.BootNotification(
+        return self.ocpp.call.BootNotification(
             charging_station={"vendor_name": s.vendor, "model": s.model, "firmware_version": "sim-1.0"},
             reason="PowerUp",
         )
 
     def heartbeat(self) -> Any:
-        return v201.call.Heartbeat()
+        return self.ocpp.call.Heartbeat()
 
     @staticmethod
     def status_name(
         c: Connector, *, charging: bool = False, waiting: bool = False, finished: bool = False
     ) -> str:
-        # 2.0.1 reports only whether the connector is in use; charging shows in TransactionEvent.
+        # 2.x reports only whether the connector is in use; charging shows in TransactionEvent.
         return "Occupied" if c.plugged or charging or c.transaction is not None else "Available"
 
     def status(self, c: Connector) -> Any:
-        return v201.call.StatusNotification(
+        return self.ocpp.call.StatusNotification(
             timestamp=now(), connector_status=c.status, evse_id=c.no, connector_id=1
         )
 
     def authorize(self, id_tag: str) -> Any:
-        return v201.call.Authorize(id_token={"id_token": id_tag, "type": "ISO14443"})
+        return self.ocpp.call.Authorize(id_token={"id_token": id_tag, "type": "ISO14443"})
 
     @staticmethod
     def authorize_status(reply: Any) -> str:
@@ -725,7 +727,7 @@ class Messages201:
         if c.remote_start_id is not None:
             info["remote_start_id"] = c.remote_start_id
         reply = await call(
-            v201.call.TransactionEvent(
+            self.ocpp.call.TransactionEvent(
                 event_type="Started",
                 timestamp=now(),
                 trigger_reason="RemoteStart" if c.remote_start_id else "Authorized",
@@ -740,8 +742,8 @@ class Messages201:
 
     def reading(self, c: Connector, *, in_transaction: bool, offline: bool) -> Any:
         if not in_transaction or c.transaction is None:
-            return v201.call.MeterValues(evse_id=c.no, meter_value=[_reading(c.register_wh, v201=True)])
-        return v201.call.TransactionEvent(
+            return self.ocpp.call.MeterValues(evse_id=c.no, meter_value=[_reading(c.register_wh, v201=True)])
+        return self.ocpp.call.TransactionEvent(
             event_type="Updated",
             timestamp=now(),
             trigger_reason="MeterValuePeriodic",
@@ -759,7 +761,7 @@ class Messages201:
             "DeAuthorized": "Deauthorized",
             "PowerLoss": "AbnormalCondition",
         }
-        return v201.call.TransactionEvent(
+        return self.ocpp.call.TransactionEvent(
             event_type="Ended",
             timestamp=now(),
             trigger_reason=trigger.get(reason, "StopAuthorized"),
@@ -773,6 +775,10 @@ class Messages201:
             meter_value=[_reading(c.register_wh, context="Transaction.End", v201=True)],
             offline=offline or None,
         )
+
+
+class Messages21(Messages201):
+    ocpp = v21
 
 
 # --- links: one connection each, answering the backend
@@ -831,12 +837,12 @@ class Link201(v201.ChargePoint):
         self, id_token: dict[str, Any], remote_start_id: int, evse_id: int | None = None, **kwargs: Any
     ) -> Any:
         ok = self.charger.remote_start(id_token["id_token"], evse_id, remote_start_id)
-        return v201.call_result.RequestStartTransaction(status="Accepted" if ok else "Rejected")
+        return self._call_result.RequestStartTransaction(status="Accepted" if ok else "Rejected")
 
     @on(Action201.request_stop_transaction)
     async def on_request_stop(self, transaction_id: str, **kwargs: Any) -> Any:
         ok = self.charger.remote_stop(transaction_id)
-        return v201.call_result.RequestStopTransaction(status="Accepted" if ok else "Rejected")
+        return self._call_result.RequestStopTransaction(status="Accepted" if ok else "Rejected")
 
     @on(Action201.set_variables)
     async def on_set_variables(self, set_variable_data: list[dict[str, Any]], **kwargs: Any) -> Any:
@@ -848,7 +854,7 @@ class Link201(v201.ChargePoint):
             results.append(
                 {"attribute_status": "Accepted", "component": item["component"], "variable": item["variable"]}
             )
-        return v201.call_result.SetVariables(set_variable_result=results)
+        return self._call_result.SetVariables(set_variable_result=results)
 
     @on(Action201.get_variables)
     async def on_get_variables(self, get_variable_data: list[dict[str, Any]], **kwargs: Any) -> Any:
@@ -861,7 +867,7 @@ class Link201(v201.ChargePoint):
             else:
                 result["attribute_status"] = "UnknownVariable"
             results.append(result)
-        return v201.call_result.GetVariables(get_variable_result=results)
+        return self._call_result.GetVariables(get_variable_result=results)
 
     @on(Action201.trigger_message)
     async def on_trigger_message(
@@ -869,9 +875,22 @@ class Link201(v201.ChargePoint):
     ) -> Any:
         if requested_message == "MeterValues":
             self.charger.triggered_readings(evse.get("id") if evse else None)
-            return v201.call_result.TriggerMessage(status="Accepted")
-        return v201.call_result.TriggerMessage(status="NotImplemented")
+            return self._call_result.TriggerMessage(status="Accepted")
+        return self._call_result.TriggerMessage(status="NotImplemented")
 
     @on(Action201.reset)
     async def on_reset(self, type: str, **kwargs: Any) -> Any:
-        return v201.call_result.Reset(status="Accepted")  # accepted; the simulator does not reboot on its own
+        # Accepted; the simulator does not reboot on its own.
+        return self._call_result.Reset(status="Accepted")
+
+
+class Link21(Link201):
+    """2.0.1's handlers on the 2.1 schemas: what v21.ChargePoint sets, and nothing more."""
+
+    _call = v21.call
+    _call_result = v21.call_result
+    _ocpp_version = "2.1"
+
+
+MESSAGES = {"1.6": Messages16, "2.0.1": Messages201, "2.1": Messages21}
+LINKS = {"1.6": Link16, "2.0.1": Link201, "2.1": Link21}

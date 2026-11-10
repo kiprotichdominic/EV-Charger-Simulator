@@ -1,11 +1,13 @@
 # Charger simulator
 
-A simulated EV charger for manual testing of an OCPP backend (CSMS). It speaks **OCPP 1.6J** or **OCPP 2.0.1**,
-runs as a small local web app, and lets you plug in, tap cards, charge, and break the connection in the ways a
-real charger does, while showing every OCPP frame on the wire.
+A simulated EV charger for manual testing of an OCPP backend (CSMS). It speaks **OCPP 1.6J**, **OCPP 2.0.1**
+or **OCPP 2.1**, runs as a small local web app, and lets you plug in, tap cards, charge, and break the connection
+in the ways a real charger does, while showing every OCPP frame on the wire.
 
 Every message is built and validated by the [`ocpp`](https://pypi.org/project/ocpp/) library, so what the
 simulator sends always matches the OCPP schema.
+
+For how the three OCPP versions differ, and how the simulator works inside, see [docs.md](docs.md).
 
 ![The charger simulator page, with the connect form on the left and the message log on the right](docs/screenshot.png)
 
@@ -42,9 +44,9 @@ Fill in the form and press **Connect**:
 | --- | --- |
 | Backend URL | WebSocket base of the backend, e.g. `ws://localhost:8000/ocpp`. The charge point ID is appended, so the charger connects to `ws://localhost:8000/ocpp/SIM-001`. |
 | Charge point ID | The charger's identity, e.g. `SIM-001`. Letters, digits and `_ . : -`. It must be registered in the backend. |
-| OCPP version | `1.6J` or `2.0.1`. Sent as the WebSocket subprotocol (`ocpp1.6` / `ocpp2.0.1`). |
+| OCPP version | `1.6J`, `2.0.1` or `2.1`. Sent as the WebSocket subprotocol (`ocpp1.6` / `ocpp2.0.1` / `ocpp2.1`). |
 | Password | Optional. If set, sent as HTTP Basic auth (`<charge point ID>:<password>`). |
-| Connectors | 1 to 8 connectors (EVSEs in 2.0.1). |
+| Connectors | 1 to 8 connectors (EVSEs in 2.0.1 and 2.1). |
 | Power (W) | Charging power per connector, default 7400 W. |
 | Reading every (s) | How often MeterValues are sent while charging. |
 | Energy speed | Fast-forward for energy. `60` charges an hour's worth of energy in one minute. |
@@ -63,7 +65,7 @@ Each connector has these controls:
 A transaction starts when a connector has both a cable and an accepted token, in either order:
 
 - Tap then plug in, or plug in then tap.
-- A remote start from the backend or app (RemoteStartTransaction in 1.6, RequestStartTransaction in 2.0.1)
+- A remote start from the backend or app (RemoteStartTransaction in 1.6, RequestStartTransaction in 2.0.1 and 2.1)
   counts as the accepted token.
 
 Starting always needs the backend; the simulator never starts a transaction offline.
@@ -85,7 +87,7 @@ These buttons simulate the failures a backend must survive. Set the outage lengt
 | Button | What the charger does |
 | --- | --- |
 | **Reconnect** | Closes the connection cleanly and opens a new one. Nothing is lost. |
-| **Network drop** | The connection dies but charging continues. Readings and stops queue in an outbox. On reconnect it does **not** send BootNotification (it never rebooted) and sends the outbox in order. In 2.0.1, events that happened offline are marked `offline=true`. |
+| **Network drop** | The connection dies but charging continues. Readings and stops queue in an outbox. On reconnect it does **not** send BootNotification (it never rebooted) and sends the outbox in order. In 2.0.1 and 2.1, events that happened offline are marked `offline=true`. |
 | **Power cut (transaction lost)** | Charging stops, the outbox is lost, and after the reboot the charger knows nothing of its transactions. The backend's power-loss recovery has to close them. |
 | **Power cut (transaction saved)** | The charger kept its transactions and outbox, as if in flash. After the reboot it sends the outbox, then ends each saved transaction with reason `PowerLoss` and its final reading. |
 
@@ -102,7 +104,7 @@ text (e.g. `TransactionEvent`), show only **Requests** or **Errors**, **Pause** 
 
 ## Messages the charger answers
 
-| OCPP 1.6J | OCPP 2.0.1 | Behaviour |
+| OCPP 1.6J | OCPP 2.0.1 and 2.1 | Behaviour |
 | --- | --- | --- |
 | RemoteStartTransaction | RequestStartTransaction | Accepts unless the connector already has a transaction (with no connector given, picks a free one). Starts once a cable is in. |
 | RemoteStopTransaction | RequestStopTransaction | Accepts if the transaction is running; stops with `Remote`. |
@@ -110,8 +112,9 @@ text (e.g. `TransactionEvent`), show only **Requests** or **Errors**, **Pause** 
 | TriggerMessage (MeterValues) | TriggerMessage (MeterValues) | Sends readings now. Other triggers return `NotImplemented`. |
 | Reset | Reset | Accepted, but the simulator does not reboot. Use a power cut button for that. |
 
-In 1.6 the backend assigns the integer transaction ID in its StartTransaction reply. In 2.0.1 the charger
-names its own transactions and numbers events with `seqNo`.
+In 1.6 the backend assigns the integer transaction ID in its StartTransaction reply. In 2.0.1 and 2.1 the
+charger names its own transactions and numbers events with `seqNo`. 2.1 behaves exactly like 2.0.1 here: the
+same messages, validated against the 2.1 schemas.
 
 ## HTTP API
 
@@ -156,9 +159,13 @@ simulator/
 - **`Charger`**: what a person at the charger sees and does: connectors, cable, card reader, meter, running
   transactions, and an outbox of messages waiting for a connection. It outlives any single connection, as real
   hardware does.
-- **`Messages16` / `Messages201`**: build the OCPP payloads for one version.
-- **`Link16` / `Link201`**: one WebSocket connection. They answer the backend's requests and carry the
+- **`Messages16` / `Messages201` / `Messages21`**: build the OCPP payloads for one version. The 2.1 classes
+  are the 2.0.1 ones with the 2.1 schemas.
+- **`Link16` / `Link201` / `Link21`**: one WebSocket connection. They answer the backend's requests and carry the
   charger's calls. A supervisor opens a new link whenever one drops, until the charger is removed.
 
 The outbox holds up to 5000 messages; when it is full the oldest readings are dropped first, as on a real
 charger with finite storage.
+
+[docs.md](docs.md) goes further: a version-by-version comparison of OCPP 1.6J, 2.0.1 and 2.1, what the
+simulator sends and answers in each, how it connects and recovers, how to extend it, and its known limits.

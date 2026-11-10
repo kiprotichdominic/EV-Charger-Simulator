@@ -74,7 +74,7 @@
   input, select { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
   input::placeholder { color: color-mix(in oklab, var(--muted) 70%, transparent); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; background: var(--sunken); border: 1px solid var(--border); border-radius: var(--r-md); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 3px; background: var(--sunken); border: 1px solid var(--border); border-radius: var(--r-md); }
   .seg button { height: 30px; border: 0; border-radius: 7px; background: none; cursor: pointer; color: var(--muted); font-weight: 500; }
   .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   details.more summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 14px; list-style: none; display: flex; align-items: center; gap: 6px; }
@@ -205,7 +205,7 @@
     <div class="mark"><svg class="i"><use href="#i-zap"/></svg></div>
     <div>
       <h1>Charger simulator</h1>
-      <p>A stand-in charger for testing the CCMS app and backend, in OCPP 1.6J or 2.0.1. No hardware needed.</p>
+      <p>A stand-in charger for testing the CCMS app and backend, in OCPP 1.6J, 2.0.1 or 2.1. No hardware needed.</p>
     </div>
   </div>
   <span class="spacer"></span>
@@ -235,6 +235,7 @@
         <div class="seg" role="group" aria-labelledby="ver-label">
           <button type="button" data-version="1.6" aria-pressed="true">1.6J</button>
           <button type="button" data-version="2.0.1" aria-pressed="false">2.0.1</button>
+          <button type="button" data-version="2.1" aria-pressed="false">2.1</button>
         </div>
         <label for="password">Password</label>
         <input id="password" type="password" autocomplete="off" placeholder="Optional in dev">
@@ -423,7 +424,7 @@ function renderBoard() {
     board.innerHTML = `<div class="empty">${icon("plug")}<h3>No charger connected</h3>
       <p>Start the backend, then connect a charger on the left.</p>
       <ol><li>The charge point ID must exist in the backend.</li>
-      <li>Pick 1.6J or 2.0.1, the same way a real charger would.</li>
+      <li>Pick 1.6J, 2.0.1 or 2.1, the same way a real charger would.</li>
       <li>Press Start in the app, then Plug in here.</li></ol></div>`;
     return;
   }

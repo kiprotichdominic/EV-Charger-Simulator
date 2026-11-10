@@ -18,7 +18,7 @@ PAGE = Path(__file__).with_name("page.html")
 class ConnectIn(BaseModel):
     url: str = Field(min_length=5, pattern=r"^wss?://")
     charge_point_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
-    version: Literal["1.6", "2.0.1"] = "1.6"
+    version: Literal["1.6", "2.0.1", "2.1"] = "1.6"
     password: str | None = None
     connectors: int = Field(default=2, ge=1, le=8)
     power_w: int = Field(default=7400, gt=0, le=400_000)
