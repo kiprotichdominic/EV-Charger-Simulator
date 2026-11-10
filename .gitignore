@@ -19,3 +19,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Claude Code
+.claude/settings.json

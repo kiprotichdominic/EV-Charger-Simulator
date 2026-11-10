@@ -421,6 +421,26 @@ The same session, as each version puts it on the wire:
 
 Any other request the backend sends gets a `NotImplemented` CallError from the library.
 
+### Choosing 2.1 on the page
+
+2.1 brings no new controls to the page. The only change is a third **2.1** button in the OCPP version
+selector. Every connector control, failure button and backend request works exactly as it does in 2.0.1.
+
+The messages 2.1 adds (see [What 2.1 adds on top of 2.0.1](#what-21-adds-on-top-of-201)) are not handled
+yet. If the backend sends one, for example `SetDefaultTariff`, `UsePriorityCharging` or `SetDERControl`, the
+charger answers with a `NotImplemented` CallError, the same as for any other unsupported request. Its own
+`TransactionEvent`s never carry the new 2.1 fields (`costDetails`, `numberOfPhasesUsed`, …) or the new
+trigger reasons (`RunningCost`, `TariffChanged`, …).
+
+So choosing 2.1 tests two things:
+
+- the backend accepts the `ocpp2.1` subprotocol
+- the backend accepts 2.0.1-style messages checked against the 2.1 schemas
+
+The easiest 2.1 features to add first are tariffs (`SetDefaultTariff`, then `TransactionEvent`s with
+`costDetails` and trigger reason `RunningCost`) and priority charging (`UsePriorityCharging`). Both belong on
+`Link21`; see [Adding to the simulator](#adding-to-the-simulator).
+
 ### Breaking the connection
 
 These simulate the failures a backend has to survive.
