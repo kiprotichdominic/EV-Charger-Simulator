@@ -9,6 +9,10 @@ simulator sends always matches the OCPP schema.
 
 For how the three OCPP versions differ, and how the simulator works inside, see [docs.md](docs.md).
 
+[![Demo of the charger simulator: connecting to a CSMS, plugging in, tapping a card and charging](docs/demo.gif)](docs/demo.mp4)
+
+Click the animation to open the full-quality video ([docs/demo.mp4](docs/demo.mp4)).
+
 ![The charger simulator page, with the connect form on the left and the message log on the right](docs/screenshot.png)
 
 ## Requirements
